@@ -29,6 +29,7 @@ services:
       DB_POSTGRESDB_PASSWORD: n8n
     volumes:
       - n8n_data:/home/node/.n8n
+      - ./schemas:/files/schemas:ro
 
 volumes:
   postgres_data:

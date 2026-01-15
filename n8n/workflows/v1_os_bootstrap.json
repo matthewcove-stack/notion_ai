@@ -1,0 +1,77 @@
+{
+  "name": "v1_os_bootstrap",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "v1/os/bootstrap",
+        "responseMode": "responseNode"
+      },
+      "id": "b40d3e21-4c53-4df0-8a1a-4d8d80a4c5b7",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const fs = require('fs');\nconst path = require('path');\n\nconst executionId = this.getExecutionId ? this.getExecutionId() : Date.now().toString();\n\nfunction respond(statusCode, body) {\n  return [{ json: { httpStatus: statusCode, body } }];\n}\n\nfunction errorEnvelope(requestId, code, message, details) {\n  return {\n    request_id: requestId || null,\n    status: 'error',\n    correlation_id: executionId,\n    data: null,\n    error: { code, message, details: details || {} }\n  };\n}\n\nfunction okEnvelope(requestId, data) {\n  return {\n    request_id: requestId,\n    status: 'ok',\n    correlation_id: executionId,\n    data,\n    error: null\n  };\n}\n\nconst headers = $json.headers || {};\nconst authHeader = (headers.authorization || headers.Authorization || '').trim();\nconst expectedAuth = `Bearer ${$env.BOOTSTRAP_BEARER_TOKEN || ''}`;\n\nif (!expectedAuth || authHeader !== expectedAuth) {\n  return respond(401, errorEnvelope(null, 'unauthorized', 'Invalid or missing Authorization header', {}));\n}\n\nconst body = $json.body;\nif (!body || typeof body !== 'object') {\n  return respond(400, errorEnvelope(null, 'invalid_request', 'Request body must be a JSON object', {}));\n}\n\nconst { request_id, idempotency_key, actor, payload } = body;\nif (typeof request_id !== 'string' || typeof idempotency_key !== 'string' || typeof actor !== 'string' || typeof payload !== 'object' || payload === null) {\n  return respond(400, errorEnvelope(request_id, 'invalid_request', 'Missing or invalid request envelope fields', {}));\n}\n\nconst { schema_version, rebuild } = payload;\nif (typeof schema_version !== 'number' || typeof rebuild !== 'boolean') {\n  return respond(400, errorEnvelope(request_id, 'invalid_request', 'Missing or invalid payload fields', {}));\n}\n\nconst notionToken = $env.NOTION_API_KEY;\nif (!notionToken) {\n  return respond(500, errorEnvelope(request_id, 'config_error', 'NOTION_API_KEY is not set', {}));\n}\n\nconst baseUrl = 'https://api.notion.com/v1';\nconst notionHeaders = {\n  Authorization: `Bearer ${notionToken}`,\n  'Notion-Version': '2022-06-28',\n  'Content-Type': 'application/json'\n};\n\nconst request = async (method, urlPath, bodyData) => {\n  const options = {\n    method,\n    url: `${baseUrl}${urlPath}`,\n    headers: notionHeaders,\n    json: true\n  };\n  if (bodyData) options.body = bodyData;\n  return this.helpers.httpRequest(options);\n};\n\nconst titleProp = (text) => ({ title: [{ text: { content: text } }] });\nconst richTextProp = (text) => ({ rich_text: [{ text: { content: text } }] });\n\nconst getTitleFromPage = (page) => {\n  if (!page || !page.properties) return null;\n  const titleKey = Object.keys(page.properties).find((key) => page.properties[key].type === 'title');\n  if (!titleKey) return null;\n  const titleArray = page.properties[titleKey].title || [];\n  return titleArray.map((t) => t.plain_text).join('');\n};\n\nconst getTitleFromDatabase = (db) => {\n  if (!db || !Array.isArray(db.title)) return null;\n  return db.title.map((t) => t.plain_text).join('');\n};\n\nconst searchAll = async (query, objectType) => {\n  let results = [];\n  let cursor = undefined;\n  while (true) {\n    const bodyData = {\n      query,\n      page_size: 100,\n      filter: { property: 'object', value: objectType }\n    };\n    if (cursor) bodyData.start_cursor = cursor;\n    const res = await request('POST', '/search', bodyData);\n    results = results.concat(res.results || []);\n    if (!res.has_more) break;\n    cursor = res.next_cursor;\n  }\n  return results;\n};\n\nconst findDatabaseByTitle = async (title) => {\n  const results = await searchAll(title, 'database');\n  return results.find((db) => getTitleFromDatabase(db) === title);\n};\n\nconst findPageByTitle = async (title) => {\n  const results = await searchAll(title, 'page');\n  return results.find((page) => getTitleFromPage(page) === title);\n};\n\nconst listChildren = async (blockId) => {\n  let results = [];\n  let cursor = undefined;\n  while (true) {\n    const query = cursor ? `?page_size=100&start_cursor=${cursor}` : '?page_size=100';\n    const res = await request('GET', `/blocks/${blockId}/children${query}`);\n    results = results.concat(res.results || []);\n    if (!res.has_more) break;\n    cursor = res.next_cursor;\n  }\n  return results;\n};\n\nconst ensureChildPage = async (parentId, title) => {\n  const children = await listChildren(parentId);\n  const existing = children.find((block) => block.type === 'child_page' && block.child_page && block.child_page.title === title);\n  if (existing) return { id: existing.id, created: false };\n  const created = await request('POST', '/pages', {\n    parent: { page_id: parentId },\n    properties: { title: titleProp(title) }\n  });\n  return { id: created.id, created: true };\n};\n\nconst ensureChildDatabase = async (parentId, schema) => {\n  const children = await listChildren(parentId);\n  const existing = children.find((block) => block.type === 'child_database' && block.child_database && block.child_database.title === schema.title);\n  if (existing) return { id: existing.id, created: false };\n  const created = await request('POST', '/databases', {\n    parent: { page_id: parentId },\n    title: [{ text: { content: schema.title } }],\n    properties: schema.properties\n  });\n  return { id: created.id, created: true };\n};\n\nconst queryDatabase = async (dbId, filter) => {\n  return request('POST', `/databases/${dbId}/query`, { filter, page_size: 1 });\n};\n\nconst getPropertyText = (page, propName) => {\n  const prop = page.properties[propName];\n  if (!prop) return null;\n  if (prop.type === 'rich_text') return (prop.rich_text || []).map((t) => t.plain_text).join('');\n  if (prop.type === 'title') return (prop.title || []).map((t) => t.plain_text).join('');\n  return null;\n};\n\nconst findRegistryValue = async (registryDbId, key) => {\n  const res = await queryDatabase(registryDbId, {\n    property: 'Key',\n    title: { equals: key }\n  });\n  const page = (res.results || [])[0];\n  if (!page) return null;\n  return getPropertyText(page, 'Value');\n};\n\nconst upsertRegistryEntry = async (registryDbId, key, value, extras) => {\n  const res = await queryDatabase(registryDbId, {\n    property: 'Key',\n    title: { equals: key }\n  });\n  const existing = (res.results || [])[0];\n  const properties = {\n    Key: titleProp(key),\n    Value: richTextProp(value || '')\n  };\n\n  if (extras && typeof extras.schemaVersion === 'number') {\n    properties['Schema Version'] = { number: extras.schemaVersion };\n  }\n  if (extras && extras.lastBootstrapRun) {\n    properties['Last Bootstrap Run'] = { date: { start: extras.lastBootstrapRun } };\n  }\n\n  if (existing) {\n    await request('PATCH', `/pages/${existing.id}`, { properties });\n    return existing.id;\n  }\n\n  const created = await request('POST', '/pages', {\n    parent: { database_id: registryDbId },\n    properties\n  });\n  return created.id;\n};\n\nconst findLedgerEntry = async (ledgerDbId, idempotencyKey) => {\n  const res = await queryDatabase(ledgerDbId, {\n    property: 'Idempotency Key',\n    title: { equals: idempotencyKey }\n  });\n  return (res.results || [])[0] || null;\n};\n\nconst createLedgerEntry = async (ledgerDbId, data) => {\n  const properties = {\n    'Idempotency Key': titleProp(data.idempotencyKey),\n    'Request ID': richTextProp(data.requestId),\n    'Endpoint': richTextProp(data.endpoint),\n    'Status': { select: { name: data.status } },\n    'Result Object ID': richTextProp(data.resultObjectId || ''),\n    'Timestamp': { date: { start: data.timestamp } },\n    'Raw Request': richTextProp(data.rawRequest || '')\n  };\n  return request('POST', '/pages', {\n    parent: { database_id: ledgerDbId },\n    properties\n  });\n};\n\ntry {\n  const schemaDir = '/files/schemas';\n  const schemaFiles = {\n    registry: 'registry.json',\n    request_ledger: 'request_ledger.json',\n    tasks: 'tasks.json',\n    projects: 'projects.json',\n    knowledge: 'knowledge.json',\n    clients: 'clients.json'\n  };\n\n  const schemas = {};\n  for (const key of Object.keys(schemaFiles)) {\n    const filePath = path.join(schemaDir, schemaFiles[key]);\n    const contents = fs.readFileSync(filePath, 'utf8');\n    schemas[key] = JSON.parse(contents);\n  }\n\n  const rootTitle = 'OS Root';\n  const endpoint = '/v1/os/bootstrap';\n  let createdAny = false;\n\n  let registryDbId = null;\n  let ledgerDbId = null;\n  let rootPageId = null;\n\n  const registryDb = await findDatabaseByTitle(schemas.registry.title);\n  if (registryDb) registryDbId = registryDb.id;\n\n  const ledgerDb = await findDatabaseByTitle(schemas.request_ledger.title);\n  if (ledgerDb) ledgerDbId = ledgerDb.id;\n\n  if (registryDbId) {\n    const existingRoot = await findRegistryValue(registryDbId, 'root_page_id');\n    if (existingRoot) rootPageId = existingRoot;\n  }\n\n  if (ledgerDbId) {\n    const existingLedger = await findLedgerEntry(ledgerDbId, idempotency_key);\n    if (existingLedger) {\n      const priorRootId = getPropertyText(existingLedger, 'Result Object ID') || rootPageId;\n      const response = okEnvelope(request_id, {\n        created: false,\n        root_page_id: priorRootId || null,\n        registry_db_id: registryDbId,\n        ledger_db_id: ledgerDbId,\n        schema_version\n      });\n      return respond(200, response);\n    }\n  }\n\n  if (!rootPageId) {\n    const existingRootPage = await findPageByTitle(rootTitle);\n    if (existingRootPage) {\n      rootPageId = existingRootPage.id;\n    } else {\n      const createdRoot = await request('POST', '/pages', {\n        parent: { type: 'workspace', workspace: true },\n        properties: { title: titleProp(rootTitle) }\n      });\n      rootPageId = createdRoot.id;\n      createdAny = true;\n    }\n  }\n\n  const sectionTitles = ['Databases', 'Projects', 'Knowledge', 'Clients', 'Archive', 'System'];\n  const sectionIds = {};\n  for (const title of sectionTitles) {\n    const result = await ensureChildPage(rootPageId, title);\n    sectionIds[title] = result.id;\n    if (result.created) createdAny = true;\n  }\n\n  const systemPageId = sectionIds.System;\n  const databasesPageId = sectionIds.Databases;\n\n  if (!registryDbId || !ledgerDbId) {\n    const systemChildren = await listChildren(systemPageId);\n    const registryChild = systemChildren.find((block) => block.type === 'child_database' && block.child_database && block.child_database.title === schemas.registry.title);\n    if (registryChild) registryDbId = registryChild.id;\n    const ledgerChild = systemChildren.find((block) => block.type === 'child_database' && block.child_database && block.child_database.title === schemas.request_ledger.title);\n    if (ledgerChild) ledgerDbId = ledgerChild.id;\n  }\n\n  if (!registryDbId) {\n    const result = await ensureChildDatabase(systemPageId, schemas.registry);\n    registryDbId = result.id;\n    if (result.created) createdAny = true;\n  }\n\n  if (!ledgerDbId) {\n    const result = await ensureChildDatabase(systemPageId, schemas.request_ledger);\n    ledgerDbId = result.id;\n    if (result.created) createdAny = true;\n  }\n\n  const dbTargets = [\n    { key: 'tasks', title: 'Tasks' },\n    { key: 'projects', title: 'Projects' },\n    { key: 'knowledge', title: 'Knowledge' },\n    { key: 'clients', title: 'Clients' }\n  ];\n\n  const dbIds = {};\n  for (const target of dbTargets) {\n    const schema = schemas[target.key];\n    const result = await ensureChildDatabase(databasesPageId, schema);\n    dbIds[target.key] = result.id;\n    if (result.created) createdAny = true;\n  }\n\n  const nowIso = new Date().toISOString();\n\n  if (registryDbId) {\n    await upsertRegistryEntry(registryDbId, 'root_page_id', rootPageId);\n    await upsertRegistryEntry(registryDbId, 'databases_page_id', databasesPageId);\n    await upsertRegistryEntry(registryDbId, 'projects_page_id', sectionIds.Projects);\n    await upsertRegistryEntry(registryDbId, 'knowledge_page_id', sectionIds.Knowledge);\n    await upsertRegistryEntry(registryDbId, 'clients_page_id', sectionIds.Clients);\n    await upsertRegistryEntry(registryDbId, 'archive_page_id', sectionIds.Archive);\n    await upsertRegistryEntry(registryDbId, 'system_page_id', systemPageId);\n    await upsertRegistryEntry(registryDbId, 'tasks_db_id', dbIds.tasks);\n    await upsertRegistryEntry(registryDbId, 'projects_db_id', dbIds.projects);\n    await upsertRegistryEntry(registryDbId, 'knowledge_db_id', dbIds.knowledge);\n    await upsertRegistryEntry(registryDbId, 'clients_db_id', dbIds.clients);\n    await upsertRegistryEntry(registryDbId, 'registry_db_id', registryDbId);\n    await upsertRegistryEntry(registryDbId, 'ledger_db_id', ledgerDbId);\n    await upsertRegistryEntry(registryDbId, 'schema_version', String(schema_version), { schemaVersion: schema_version });\n    await upsertRegistryEntry(registryDbId, 'last_bootstrap_run', nowIso, { lastBootstrapRun: nowIso });\n  }\n\n  if (ledgerDbId) {\n    await createLedgerEntry(ledgerDbId, {\n      idempotencyKey: idempotency_key,\n      requestId: request_id,\n      endpoint,\n      status: 'ok',\n      resultObjectId: rootPageId,\n      timestamp: nowIso,\n      rawRequest: JSON.stringify(body)\n    });\n  }\n\n  const response = okEnvelope(request_id, {\n    created: createdAny,\n    root_page_id: rootPageId,\n    registry_db_id: registryDbId,\n    ledger_db_id: ledgerDbId,\n    schema_version\n  });\n\n  return respond(200, response);\n} catch (error) {\n  const message = error && error.message ? error.message : 'Unexpected error';\n  const details = { stack: error && error.stack ? error.stack : null };\n  return respond(500, errorEnvelope(request_id, 'bootstrap_failed', message, details));\n}\n"
+      },
+      "id": "b97f2e55-7fd2-4a5a-96ba-3f784fca1a2e",
+      "name": "Bootstrap Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        40,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "responseCode": "={{$json.httpStatus}}",
+        "responseData": "={{$json.body}}"
+      },
+      "id": "f0ee2d42-4c72-4e6a-b682-5e8c2670f1b1",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        300,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Bootstrap Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bootstrap Handler": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "9fd3a7c5-6e89-4a2d-9e1b-9b0b2d836ee3",
+  "id": "3b2c5b6d-7df0-4d10-bf72-0f4b99a9e3c0",
+  "tags": []
+}
