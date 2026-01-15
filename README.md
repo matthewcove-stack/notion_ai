@@ -75,7 +75,7 @@ docker compose up -d
 docker compose run --rm smoke all
 ```
 
-If n8n registers webhooks with a workflow ID prefix, set:
+If n8n registers webhooks with workflow ID prefixes, either set `N8N_API_KEY` in `.env` (recommended) or provide a prefix override:
 
 ```
 SMOKE_WEBHOOK_PREFIX=<workflow_id>/webhook

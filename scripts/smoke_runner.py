@@ -14,16 +14,80 @@ def get_token():
     return token
 
 
-def webhook_base():
-    base_url = os.environ.get("SMOKE_BASE_URL", "http://n8n:5678").rstrip("/")
+def base_url():
+    return os.environ.get("SMOKE_BASE_URL", "http://n8n:5678").rstrip("/")
+
+
+def n8n_api_key():
+    return os.environ.get("N8N_API_KEY")
+
+
+def n8n_api_base():
+    return os.environ.get("SMOKE_N8N_API_BASE", base_url())
+
+
+def resolve_workflow_prefix_map():
+    mapping = os.environ.get("SMOKE_WEBHOOK_MAP")
+    if not mapping:
+        return {}
+    try:
+        return json.loads(mapping)
+    except json.JSONDecodeError:
+        raise RuntimeError("SMOKE_WEBHOOK_MAP must be valid JSON")
+
+
+def fetch_workflow_ids():
+    api_key = n8n_api_key()
+    if not api_key:
+        return {}
+    url = f"{n8n_api_base()}/api/v1/workflows"
+    req = request.Request(url, method="GET")
+    req.add_header("X-N8N-API-KEY", api_key)
+    with request.urlopen(req, timeout=30) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    workflows = data.get("data", [])
+    latest = {}
+    for wf in workflows:
+        name = wf.get("name")
+        if not name:
+            continue
+        if wf.get("active") is False:
+            continue
+        updated = wf.get("updatedAt") or ""
+        if name not in latest or updated > latest[name]["updatedAt"]:
+            latest[name] = {"id": wf.get("id"), "updatedAt": updated}
+    return {name: info["id"] for name, info in latest.items()}
+
+
+def webhook_url_for(endpoint):
     prefix = os.environ.get("SMOKE_WEBHOOK_PREFIX", "").strip("/")
     if prefix:
-        return f"{base_url}/webhook/{prefix}"
-    return f"{base_url}/webhook"
+        return f"{base_url()}/webhook/{prefix}{endpoint}"
+
+    prefix_map = resolve_workflow_prefix_map()
+    if endpoint in prefix_map:
+        map_prefix = str(prefix_map[endpoint]).strip("/")
+        return f"{base_url()}/webhook/{map_prefix}{endpoint}"
+
+    workflow_map = {
+        "/v1/os/bootstrap": "v1_os_bootstrap",
+        "/v1/notion/search": "v1_notion_search",
+        "/v1/notion/tasks/create": "v1_tasks_create",
+        "/v1/notion/tasks/update": "v1_tasks_update",
+        "/v1/notion/db/schema": "v1_db_schema",
+        "/v1/notion/db/sample": "v1_db_sample",
+    }
+    workflow_name = workflow_map.get(endpoint)
+    workflow_ids = fetch_workflow_ids()
+    workflow_id = workflow_ids.get(workflow_name)
+    if workflow_id:
+        return f"{base_url()}/webhook/{workflow_id}/webhook{endpoint}"
+
+    return f"{base_url()}/webhook{endpoint}"
 
 
 def post_json(path, payload, token):
-    url = f"{webhook_base()}{path}"
+    url = webhook_url_for(path)
     data = json.dumps(payload).encode("utf-8")
     req = request.Request(url, data=data, method="POST")
     req.add_header("Authorization", f"Bearer {token}")
