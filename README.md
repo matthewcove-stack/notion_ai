@@ -32,8 +32,8 @@ cp .env.example .env
 - `N8N_BASIC_AUTH_USER` / `N8N_BASIC_AUTH_PASSWORD`
 - `N8N_ENCRYPTION_KEY` (32+ chars)
 - `NOTION_API_KEY` (Notion internal integration token)
-- `BOOTSTRAP_BEARER_TOKEN` (shared secret for all v1 endpoints)
-- `API_BEARER_TOKEN` (fallback if bootstrap token is not set)
+- `BOOTSTRAP_BEARER_TOKEN` (used only for `/v1/os/bootstrap`)
+- `API_BEARER_TOKEN` (used for all other v1 endpoints)
 - `NODE_FUNCTION_ALLOW_BUILTIN` should include `fs,path` for schema-as-code access
 
 3) Start n8n + Postgres:

@@ -5,10 +5,10 @@ All endpoints are POST webhooks exposed by n8n. Every response uses the standard
 Auth header:
 
 ```
-Authorization: Bearer <BOOTSTRAP_BEARER_TOKEN>
+Authorization: Bearer <API_BEARER_TOKEN>
 ```
 
-If `BOOTSTRAP_BEARER_TOKEN` is not set, the workflows will use `API_BEARER_TOKEN`.
+`/v1/os/bootstrap` is the only endpoint that uses `BOOTSTRAP_BEARER_TOKEN`.
 
 ## Endpoints
 

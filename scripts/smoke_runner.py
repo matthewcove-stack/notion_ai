@@ -7,10 +7,17 @@ import uuid
 from urllib import request, error
 
 
-def get_token():
-    token = os.environ.get("BOOTSTRAP_BEARER_TOKEN") or os.environ.get("API_BEARER_TOKEN")
+def get_api_token():
+    token = os.environ.get("API_BEARER_TOKEN")
     if not token:
-        raise RuntimeError("Missing BOOTSTRAP_BEARER_TOKEN or API_BEARER_TOKEN")
+        raise RuntimeError("Missing API_BEARER_TOKEN")
+    return token
+
+
+def get_bootstrap_token():
+    token = os.environ.get("BOOTSTRAP_BEARER_TOKEN")
+    if not token:
+        raise RuntimeError("Missing BOOTSTRAP_BEARER_TOKEN")
     return token
 
 
@@ -178,7 +185,7 @@ def run_db_sample(token, key):
 
 
 def run_task_create(token):
-    key = "smoke-task-create"
+    key = f"smoke-task-create-{uuid.uuid4()}"
     task = {
         "title": f"Smoke Task {int(time.time())}",
         "status": "Todo",
@@ -213,7 +220,7 @@ def run_task_create(token):
 
 
 def run_task_update(token, page_id):
-    key = "smoke-task-update"
+    key = f"smoke-task-update-{uuid.uuid4()}"
     patch = {
         "status": "In Progress",
         "notes_append": "Smoke update append",
@@ -243,47 +250,47 @@ def run_task_update(token, page_id):
 
 
 def main():
-    token = get_token()
+    api_token = get_api_token()
     command = sys.argv[1] if len(sys.argv) > 1 else "all"
 
     if command == "bootstrap":
-        created = run_bootstrap(token)
+        created = run_bootstrap(get_bootstrap_token())
         print(f"bootstrap created={created}")
         return
 
     if command == "search":
-        results = run_search(token)
+        results = run_search(api_token)
         print(f"search results={len(results)}")
         return
 
     if command == "tasks":
-        page_id = run_task_create(token)
+        page_id = run_task_create(api_token)
         print(f"tasks_create page_id={page_id}")
-        run_task_update(token, page_id)
+        run_task_update(api_token, page_id)
         print("tasks_update ok")
         return
 
     if command == "db":
-        schema = run_db_schema(token, "tasks")
+        schema = run_db_schema(api_token, "tasks")
         print(f"db_schema id={schema['database_id']}")
-        sample = run_db_sample(token, "tasks")
+        sample = run_db_sample(api_token, "tasks")
         print(f"db_sample rows={len(sample)}")
         return
 
     if command != "all":
         raise RuntimeError(f"Unknown command: {command}")
 
-    created = run_bootstrap(token)
+    created = run_bootstrap(get_bootstrap_token())
     print(f"bootstrap created={created}")
-    results = run_search(token)
+    results = run_search(api_token)
     print(f"search results={len(results)}")
-    page_id = run_task_create(token)
+    page_id = run_task_create(api_token)
     print(f"tasks_create page_id={page_id}")
-    run_task_update(token, page_id)
+    run_task_update(api_token, page_id)
     print("tasks_update ok")
-    schema = run_db_schema(token, "tasks")
+    schema = run_db_schema(api_token, "tasks")
     print(f"db_schema id={schema['database_id']}")
-    sample = run_db_sample(token, "tasks")
+    sample = run_db_sample(api_token, "tasks")
     print(f"db_sample rows={len(sample)}")
 
 
