@@ -32,8 +32,11 @@
     },
     {
       "parameters": {
-        "responseCode": "={{$json.httpStatus}}",
-        "responseData": "={{$json.body}}"
+        "respondWith": "json",
+        "responseBody": "={{$json.body}}",
+        "options": {
+          "responseCode": "={{$json.httpStatus}}"
+        }
       },
       "id": "f0ee2d42-4c72-4e6a-b682-5e8c2670f1b1",
       "name": "Respond",

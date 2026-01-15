@@ -1,77 +1,80 @@
 {
-    "name":  "v1_tasks_create",
-    "nodes":  [
-                  {
-                      "parameters":  {
-                                         "httpMethod":  "POST",
-                                         "path":  "v1/notion/tasks/create",
-                                         "responseMode":  "responseNode"
-                                     },
-                      "id":  "7d1f5cd0-383f-4d9a-a0e9-5569c7c74a3f",
-                      "name":  "Webhook",
-                      "type":  "n8n-nodes-base.webhook",
-                      "typeVersion":  1,
-                      "position":  [
-                                       -200,
-                                       0
-                                   ]
-                  },
-                  {
-                      "parameters":  {
-                                         "mode":  "runOnceForAllItems",
-                                         "jsCode":  "const executionId = this.getExecutionId ? this.getExecutionId() : Date.now().toString();\n\nfunction respond(statusCode, body) {\n  return [{ json: { httpStatus: statusCode, body } }];\n}\n\nfunction errorEnvelope(requestId, code, message, details) {\n  return {\n    request_id: requestId || null,\n    status: \u0027error\u0027,\n    correlation_id: executionId,\n    data: null,\n    error: { code, message, details: details || {} }\n  };\n}\n\nfunction okEnvelope(requestId, data) {\n  return {\n    request_id: requestId,\n    status: \u0027ok\u0027,\n    correlation_id: executionId,\n    data,\n    error: null\n  };\n}\n\nconst notionToken = $env.NOTION_API_KEY;\nif (!notionToken) {\n  return respond(500, errorEnvelope(null, \u0027config_error\u0027, \u0027NOTION_API_KEY is not set\u0027, {}));\n}\n\nconst baseUrl = \u0027https://api.notion.com/v1\u0027;\nconst notionHeaders = {\n  Authorization: `Bearer ${notionToken}`,\n  \u0027Notion-Version\u0027: \u00272022-06-28\u0027,\n  \u0027Content-Type\u0027: \u0027application/json\u0027\n};\n\nconst request = async (method, urlPath, bodyData) =\u003e {\n  const options = {\n    method,\n    url: `${baseUrl}${urlPath}`,\n    headers: notionHeaders,\n    json: true\n  };\n  if (bodyData) options.body = bodyData;\n  return this.helpers.httpRequest(options);\n};\n\nconst titleText = (text) =\u003e ({ title: [{ text: { content: text } }] });\nconst richText = (text) =\u003e ({ rich_text: [{ text: { content: text } }] });\n\nconst getTitleFromPage = (page) =\u003e {\n  if (!page || !page.properties) return \u0027\u0027;\n  const titleKey = Object.keys(page.properties).find((key) =\u003e page.properties[key].type === \u0027title\u0027);\n  if (!titleKey) return \u0027\u0027;\n  const titleArray = page.properties[titleKey].title || [];\n  return titleArray.map((t) =\u003e t.plain_text).join(\u0027\u0027);\n};\n\nconst getTitleFromDatabase = (db) =\u003e {\n  if (!db || !Array.isArray(db.title)) return \u0027\u0027;\n  return db.title.map((t) =\u003e t.plain_text).join(\u0027\u0027);\n};\n\nconst queryDatabase = async (dbId, filter) =\u003e {\n  return request(\u0027POST\u0027, `/databases/${dbId}/query`, { filter, page_size: 1 });\n};\n\nconst getPropertyText = (page, propName) =\u003e {\n  const prop = page.properties[propName];\n  if (!prop) return \u0027\u0027;\n  if (prop.type === \u0027rich_text\u0027) return (prop.rich_text || []).map((t) =\u003e t.plain_text).join(\u0027\u0027);\n  if (prop.type === \u0027title\u0027) return (prop.title || []).map((t) =\u003e t.plain_text).join(\u0027\u0027);\n  return \u0027\u0027;\n};\n\nconst findDatabaseByTitle = async (title) =\u003e {\n  const res = await request(\u0027POST\u0027, \u0027/search\u0027, {\n    query: title,\n    page_size: 10,\n    filter: { property: \u0027object\u0027, value: \u0027database\u0027 }\n  });\n  return (res.results || []).find((db) =\u003e getTitleFromDatabase(db) === title) || null;\n};\n\nconst findRegistryDbId = async () =\u003e {\n  const registryDb = await findDatabaseByTitle(\u0027OS Registry\u0027);\n  return registryDb ? registryDb.id : null;\n};\n\nconst findRegistryValue = async (registryDbId, key) =\u003e {\n  const res = await queryDatabase(registryDbId, {\n    property: \u0027Key\u0027,\n    title: { equals: key }\n  });\n  const page = (res.results || [])[0];\n  if (!page) return null;\n  return getPropertyText(page, \u0027Value\u0027);\n};\n\nconst resolveLedgerDbId = async (registryDbId) =\u003e {\n  if (!registryDbId) return null;\n  const ledgerId = await findRegistryValue(registryDbId, \u0027ledger_db_id\u0027);\n  if (ledgerId) return ledgerId;\n  const ledgerDb = await findDatabaseByTitle(\u0027Request Ledger\u0027);\n  return ledgerDb ? ledgerDb.id : null;\n};\n\nconst resolveDatabaseId = async (registryDbId, databaseKey) =\u003e {\n  if (!registryDbId) return null;\n  if (databaseKey === \u0027registry\u0027) return registryDbId;\n  if (databaseKey === \u0027request_ledger\u0027) return await resolveLedgerDbId(registryDbId);\n  const key = `${databaseKey}_db_id`;\n  const dbId = await findRegistryValue(registryDbId, key);\n  return dbId || null;\n};\n\nconst findLedgerEntry = async (ledgerDbId, idempotencyKey) =\u003e {\n  const res = await queryDatabase(ledgerDbId, {\n    property: \u0027Idempotency Key\u0027,\n    title: { equals: idempotencyKey }\n  });\n  return (res.results || [])[0] || null;\n};\n\nconst createLedgerEntry = async (ledgerDbId, data) =\u003e {\n  const properties = {\n    \u0027Idempotency Key\u0027: titleText(data.idempotencyKey),\n    \u0027Request ID\u0027: richText(data.requestId),\n    \u0027Endpoint\u0027: richText(data.endpoint),\n    \u0027Status\u0027: { select: { name: data.status } },\n    \u0027Result Object ID\u0027: richText(data.resultObjectId || \u0027\u0027),\n    \u0027Timestamp\u0027: { date: { start: data.timestamp } },\n    \u0027Raw Request\u0027: richText(data.rawRequest || \u0027\u0027)\n  };\n  return request(\u0027POST\u0027, \u0027/pages\u0027, {\n    parent: { database_id: ledgerDbId },\n    properties\n  });\n};\n\nconst getPage = async (pageId) =\u003e request(\u0027GET\u0027, `/pages/${pageId}`);\n\nconst headers = $json.headers || {};\nconst authHeader = (headers.authorization || headers.Authorization || \u0027\u0027).trim();\nconst bearerToken = $env.BOOTSTRAP_BEARER_TOKEN || $env.API_BEARER_TOKEN || \u0027\u0027;\n\nif (!bearerToken) {\n  return respond(500, errorEnvelope(null, \u0027config_error\u0027, \u0027No bearer token configured\u0027, {}));\n}\n\nconst expectedAuth = `Bearer ${bearerToken}`;\n\nif (authHeader !== expectedAuth) {\n  return respond(401, errorEnvelope(null, \u0027unauthorized\u0027, \u0027Invalid or missing Authorization header\u0027, {}));\n}\n\nconst body = .body;\nif (!body || typeof body !== \u0027object\u0027) {\n  return respond(400, errorEnvelope(null, \u0027invalid_request\u0027, \u0027Request body must be a JSON object\u0027, {}));\n}\n\nconst { request_id, idempotency_key, actor, payload } = body;\nif (typeof request_id !== \u0027string\u0027 || typeof idempotency_key !== \u0027string\u0027 || typeof actor !== \u0027string\u0027 || typeof payload !== \u0027object\u0027 || payload === null) {\n  return respond(400, errorEnvelope(request_id, \u0027invalid_request\u0027, \u0027Missing or invalid request envelope fields\u0027, {}));\n}\n\nconst task = payload.task;\nif (!task || typeof task !== \u0027object\u0027) {\n  return respond(400, errorEnvelope(request_id, \u0027invalid_request\u0027, \u0027payload.task must be an object\u0027, {}));\n}\n\nif (typeof task.title !== \u0027string\u0027 || task.title.trim() === \u0027\u0027) {\n  return respond(400, errorEnvelope(request_id, \u0027invalid_request\u0027, \u0027task.title is required\u0027, {}));\n}\n\ntry {\n  const registryDbId = await findRegistryDbId();\n  if (!registryDbId) {\n    return respond(500, errorEnvelope(request_id, \u0027registry_not_found\u0027, \u0027OS Registry database not found\u0027, {}));\n  }\n\n  const ledgerDbId = await resolveLedgerDbId(registryDbId);\n  if (!ledgerDbId) {\n    return respond(500, errorEnvelope(request_id, \u0027ledger_not_found\u0027, \u0027Request Ledger database not found\u0027, {}));\n  }\n\n  let tasksDbId = await resolveDatabaseId(registryDbId, \u0027tasks\u0027);\n  if (!tasksDbId) {\n    const tasksDb = await findDatabaseByTitle(\u0027Tasks\u0027);\n    tasksDbId = tasksDb ? tasksDb.id : null;\n  }\n\n  if (!tasksDbId) {\n    return respond(500, errorEnvelope(request_id, \u0027tasks_db_not_found\u0027, \u0027Tasks database not found\u0027, {}));\n  }\n\n  const existingLedger = await findLedgerEntry(ledgerDbId, idempotency_key);\n  if (existingLedger) {\n    const priorId = getPropertyText(existingLedger, \u0027Result Object ID\u0027);\n    let priorUrl = null;\n    if (priorId) {\n      const page = await getPage(priorId);\n      priorUrl = page.url || null;\n    }\n\n    return respond(200, okEnvelope(request_id, {\n      created: false,\n      notion_page_id: priorId || null,\n      notion_url: priorUrl\n    }));\n  }\n\n  const properties = {\n    Title: titleText(task.title),\n    \u0027Idempotency Key\u0027: richText(idempotency_key)\n  };\n\n  if (task.status) {\n    properties.Status = { select: { name: task.status } };\n  }\n  if (task.due) {\n    properties.Due = { date: { start: task.due } };\n  }\n  if (task.priority) {\n    properties.Priority = { select: { name: task.priority } };\n  }\n  if (task.project) {\n    properties.Project = richText(task.project);\n  }\n  if (Array.isArray(task.tags)) {\n    properties.Tags = { multi_select: task.tags.map((name) =\u003e ({ name })) };\n  }\n  if (task.notes) {\n    properties.Notes = richText(task.notes);\n  }\n\n  const created = await request(\u0027POST\u0027, \u0027/pages\u0027, {\n    parent: { database_id: tasksDbId },\n    properties\n  });\n\n  const nowIso = new Date().toISOString();\n  await createLedgerEntry(ledgerDbId, {\n    idempotencyKey: idempotency_key,\n    requestId: request_id,\n    endpoint: \u0027/v1/notion/tasks/create\u0027,\n    status: \u0027ok\u0027,\n    resultObjectId: created.id,\n    timestamp: nowIso,\n    rawRequest: JSON.stringify(body)\n  });\n\n  return respond(200, okEnvelope(request_id, {\n    created: true,\n    notion_page_id: created.id,\n    notion_url: created.url\n  }));\n} catch (error) {\n  const message = error \u0026\u0026 error.message ? error.message : \u0027Create task failed\u0027;\n  return respond(500, errorEnvelope(request_id, \u0027tasks_create_failed\u0027, message, { stack: error \u0026\u0026 error.stack }));\n}"
-                                     },
-                      "id":  "7974eaf0-668f-4518-b44d-20ce264dfb9f",
-                      "name":  "Handler",
-                      "type":  "n8n-nodes-base.code",
-                      "typeVersion":  2,
-                      "position":  [
-                                       40,
-                                       0
-                                   ]
-                  },
-                  {
-                      "parameters":  {
-                                         "responseCode":  "={{$json.httpStatus}}",
-                                         "responseData":  "={{$json.body}}"
-                                     },
-                      "id":  "09983d19-8cd5-47e0-b40e-69bd3b1ad49f",
-                      "name":  "Respond",
-                      "type":  "n8n-nodes-base.respondToWebhook",
-                      "typeVersion":  1,
-                      "position":  [
-                                       300,
-                                       0
-                                   ]
-                  }
-              ],
-    "connections":  {
-                        "Webhook":  {
-                                        "main":  [
-                                                     {
-                                                         "node":  "Handler",
-                                                         "type":  "main",
-                                                         "index":  0
-                                                     }
-                                                 ]
-                                    },
-                        "Handler":  {
-                                        "main":  [
-                                                     {
-                                                         "node":  "Respond",
-                                                         "type":  "main",
-                                                         "index":  0
-                                                     }
-                                                 ]
-                                    }
-                    },
-    "active":  false,
-    "settings":  {
-
-                 },
-    "versionId":  "6bf146f4-8685-4394-905c-ea0e7a7e8f02",
-    "id":  "abe398f2-aaf5-490b-a8f0-0108610205ef",
-    "tags":  [
-
-             ]
+  "name": "v1_tasks_create",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "v1/notion/tasks/create",
+        "responseMode": "responseNode"
+      },
+      "id": "64c5d0f3-024e-4697-8902-c85ea35cda22",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst executionId = this.getExecutionId ? this.getExecutionId() : Date.now().toString();\n\nfunction respond(statusCode, body) {\n  return [{ json: { httpStatus: statusCode, body } }];\n}\n\nfunction errorEnvelope(requestId, code, message, details) {\n  return {\n    request_id: requestId || null,\n    status: 'error',\n    correlation_id: executionId,\n    data: null,\n    error: { code, message, details: details || {} }\n  };\n}\n\nfunction okEnvelope(requestId, data) {\n  return {\n    request_id: requestId,\n    status: 'ok',\n    correlation_id: executionId,\n    data,\n    error: null\n  };\n}\n\nconst notionToken = $env.NOTION_API_KEY;\nif (!notionToken) {\n  return respond(500, errorEnvelope(null, 'config_error', 'NOTION_API_KEY is not set', {}));\n}\n\nconst baseUrl = 'https://api.notion.com/v1';\nconst notionHeaders = {\n  Authorization: `Bearer ${notionToken}`,\n  'Notion-Version': '2022-06-28',\n  'Content-Type': 'application/json'\n};\n\nconst request = async (method, urlPath, bodyData) => {\n  const options = {\n    method,\n    url: `${baseUrl}${urlPath}`,\n    headers: notionHeaders,\n    json: true\n  };\n  if (bodyData) options.body = bodyData;\n  return this.helpers.httpRequest(options);\n};\n\nconst titleText = (text) => ({ title: [{ text: { content: text } }] });\nconst richText = (text) => ({ rich_text: [{ text: { content: text } }] });\n\nconst getTitleFromPage = (page) => {\n  if (!page || !page.properties) return '';\n  const titleKey = Object.keys(page.properties).find((key) => page.properties[key].type === 'title');\n  if (!titleKey) return '';\n  const titleArray = page.properties[titleKey].title || [];\n  return titleArray.map((t) => t.plain_text).join('');\n};\n\nconst getTitleFromDatabase = (db) => {\n  if (!db || !Array.isArray(db.title)) return '';\n  return db.title.map((t) => t.plain_text).join('');\n};\n\nconst queryDatabase = async (dbId, filter) => {\n  return request('POST', `/databases/${dbId}/query`, { filter, page_size: 1 });\n};\n\nconst getPropertyText = (page, propName) => {\n  const prop = page.properties[propName];\n  if (!prop) return '';\n  if (prop.type === 'rich_text') return (prop.rich_text || []).map((t) => t.plain_text).join('');\n  if (prop.type === 'title') return (prop.title || []).map((t) => t.plain_text).join('');\n  return '';\n};\n\nconst findDatabaseByTitle = async (title) => {\n  const res = await request('POST', '/search', {\n    query: title,\n    page_size: 10,\n    filter: { property: 'object', value: 'database' }\n  });\n  return (res.results || []).find((db) => getTitleFromDatabase(db) === title) || null;\n};\n\nconst findRegistryDbId = async () => {\n  const registryDb = await findDatabaseByTitle('OS Registry');\n  return registryDb ? registryDb.id : null;\n};\n\nconst findRegistryValue = async (registryDbId, key) => {\n  const res = await queryDatabase(registryDbId, {\n    property: 'Key',\n    title: { equals: key }\n  });\n  const page = (res.results || [])[0];\n  if (!page) return null;\n  return getPropertyText(page, 'Value');\n};\n\nconst resolveLedgerDbId = async (registryDbId) => {\n  if (!registryDbId) return null;\n  const ledgerId = await findRegistryValue(registryDbId, 'ledger_db_id');\n  if (ledgerId) return ledgerId;\n  const ledgerDb = await findDatabaseByTitle('Request Ledger');\n  return ledgerDb ? ledgerDb.id : null;\n};\n\nconst resolveDatabaseId = async (registryDbId, databaseKey) => {\n  if (!registryDbId) return null;\n  if (databaseKey === 'registry') return registryDbId;\n  if (databaseKey === 'request_ledger') return await resolveLedgerDbId(registryDbId);\n  const key = `${databaseKey}_db_id`;\n  const dbId = await findRegistryValue(registryDbId, key);\n  return dbId || null;\n};\n\nconst findLedgerEntry = async (ledgerDbId, idempotencyKey) => {\n  const res = await queryDatabase(ledgerDbId, {\n    property: 'Idempotency Key',\n    title: { equals: idempotencyKey }\n  });\n  return (res.results || [])[0] || null;\n};\n\nconst createLedgerEntry = async (ledgerDbId, data) => {\n  const properties = {\n    'Idempotency Key': titleText(data.idempotencyKey),\n    'Request ID': richText(data.requestId),\n    'Endpoint': richText(data.endpoint),\n    'Status': { select: { name: data.status } },\n    'Result Object ID': richText(data.resultObjectId || ''),\n    'Timestamp': { date: { start: data.timestamp } },\n    'Raw Request': richText(data.rawRequest || '')\n  };\n  return request('POST', '/pages', {\n    parent: { database_id: ledgerDbId },\n    properties\n  });\n};\n\nconst getPage = async (pageId) => request('GET', `/pages/${pageId}`);\n\n\nconst headers = $json.headers || {};\nconst authHeader = (headers.authorization || headers.Authorization || '').trim();\nconst bearerToken = $env.BOOTSTRAP_BEARER_TOKEN || $env.API_BEARER_TOKEN || '';\n\nif (!bearerToken) {\n  return respond(500, errorEnvelope(null, 'config_error', 'No bearer token configured', {}));\n}\n\nconst expectedAuth = `Bearer ${bearerToken}`;\n\nif (authHeader !== expectedAuth) {\n  return respond(401, errorEnvelope(null, 'unauthorized', 'Invalid or missing Authorization header', {}));\n}\n\nconst body = $json.body;\nif (!body || typeof body !== 'object') {\n  return respond(400, errorEnvelope(null, 'invalid_request', 'Request body must be a JSON object', {}));\n}\n\nconst { request_id, idempotency_key, actor, payload } = body;\nif (typeof request_id !== 'string' || typeof idempotency_key !== 'string' || typeof actor !== 'string' || typeof payload !== 'object' || payload === null) {\n  return respond(400, errorEnvelope(request_id, 'invalid_request', 'Missing or invalid request envelope fields', {}));\n}\n\nconst task = payload.task;\nif (!task || typeof task !== 'object') {\n  return respond(400, errorEnvelope(request_id, 'invalid_request', 'payload.task must be an object', {}));\n}\n\nif (typeof task.title !== 'string' || task.title.trim() === '') {\n  return respond(400, errorEnvelope(request_id, 'invalid_request', 'task.title is required', {}));\n}\n\ntry {\n  const registryDbId = await findRegistryDbId();\n  if (!registryDbId) {\n    return respond(500, errorEnvelope(request_id, 'registry_not_found', 'OS Registry database not found', {}));\n  }\n\n  const ledgerDbId = await resolveLedgerDbId(registryDbId);\n  if (!ledgerDbId) {\n    return respond(500, errorEnvelope(request_id, 'ledger_not_found', 'Request Ledger database not found', {}));\n  }\n\n  let tasksDbId = await resolveDatabaseId(registryDbId, 'tasks');\n  if (!tasksDbId) {\n    const tasksDb = await findDatabaseByTitle('Tasks');\n    tasksDbId = tasksDb ? tasksDb.id : null;\n  }\n\n  if (!tasksDbId) {\n    return respond(500, errorEnvelope(request_id, 'tasks_db_not_found', 'Tasks database not found', {}));\n  }\n\n  const existingLedger = await findLedgerEntry(ledgerDbId, idempotency_key);\n  if (existingLedger) {\n    const priorId = getPropertyText(existingLedger, 'Result Object ID');\n    let priorUrl = null;\n    if (priorId) {\n      const page = await getPage(priorId);\n      priorUrl = page.url || null;\n    }\n\n    return respond(200, okEnvelope(request_id, {\n      created: false,\n      notion_page_id: priorId || null,\n      notion_url: priorUrl\n    }));\n  }\n\n  const properties = {\n    Title: titleText(task.title),\n    'Idempotency Key': richText(idempotency_key)\n  };\n\n  if (task.status) {\n    properties.Status = { select: { name: task.status } };\n  }\n  if (task.due) {\n    properties.Due = { date: { start: task.due } };\n  }\n  if (task.priority) {\n    properties.Priority = { select: { name: task.priority } };\n  }\n  if (task.project) {\n    properties.Project = richText(task.project);\n  }\n  if (Array.isArray(task.tags)) {\n    properties.Tags = { multi_select: task.tags.map((name) => ({ name })) };\n  }\n  if (task.notes) {\n    properties.Notes = richText(task.notes);\n  }\n\n  const created = await request('POST', '/pages', {\n    parent: { database_id: tasksDbId },\n    properties\n  });\n\n  const nowIso = new Date().toISOString();\n  await createLedgerEntry(ledgerDbId, {\n    idempotencyKey: idempotency_key,\n    requestId: request_id,\n    endpoint: '/v1/notion/tasks/create',\n    status: 'ok',\n    resultObjectId: created.id,\n    timestamp: nowIso,\n    rawRequest: JSON.stringify(body)\n  });\n\n  return respond(200, okEnvelope(request_id, {\n    created: true,\n    notion_page_id: created.id,\n    notion_url: created.url\n  }));\n} catch (error) {\n  const message = error && error.message ? error.message : 'Create task failed';\n  return respond(500, errorEnvelope(request_id, 'tasks_create_failed', message, { stack: error && error.stack }));\n}\n"
+      },
+      "id": "0d067101-c5bc-4d26-bd68-124507dfafe7",
+      "name": "Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        40,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json.body}}",
+        "options": {
+          "responseCode": "={{$json.httpStatus}}"
+        }
+      },
+      "id": "51e491a7-33fa-4eb1-8438-fd9de2c4b76b",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        300,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handler": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "3e79d3f2-9354-48d2-a1c9-4999dd9102ab",
+  "id": "aca540ad-34a0-4917-af92-90f739548eb4",
+  "tags": []
 }
