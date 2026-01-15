@@ -149,7 +149,10 @@ def run_search(token):
     )
     status, body = post_json("/v1/notion/search", payload, token)
     data = assert_ok(status, body, "search")
-    return data["data"]["results"]
+    results = data["data"]["results"]
+    for row in results:
+        print(json.dumps(row))
+    return results
 
 
 def run_db_schema(token, key):

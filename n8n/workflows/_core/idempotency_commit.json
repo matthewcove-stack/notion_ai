@@ -1,0 +1,48 @@
+{
+  "name": "idempotency_commit",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "90814379-6d98-41b2-b413-ad6ac4f39175",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        -200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst notionToken = $env.NOTION_API_KEY;\nif (!notionToken) {\n  throw new Error('NOTION_API_KEY is not set');\n}\n\nconst baseUrl = 'https://api.notion.com/v1';\nconst notionHeaders = {\n  Authorization: `Bearer ${notionToken}`,\n  'Notion-Version': '2022-06-28',\n  'Content-Type': 'application/json'\n};\n\nconst request = async (method, urlPath, bodyData) => {\n  const options = {\n    method,\n    url: `${baseUrl}${urlPath}`,\n    headers: notionHeaders,\n    json: true\n  };\n  if (bodyData) options.body = bodyData;\n  return this.helpers.httpRequest(options);\n};\n\nconst titleText = (text) => ({ title: [{ text: { content: text } }] });\nconst richText = (text) => ({ rich_text: [{ text: { content: text } }] });\n\nconst getPropertyText = (page, propName) => {\n  const prop = page.properties[propName];\n  if (!prop) return '';\n  if (prop.type === 'rich_text') return (prop.rich_text || []).map((t) => t.plain_text).join('');\n  if (prop.type === 'title') return (prop.title || []).map((t) => t.plain_text).join('');\n  return '';\n};\n\nconst getPropertySelect = (page, propName) => {\n  const prop = page.properties[propName];\n  if (!prop || prop.type !== 'select') return '';\n  return prop.select ? prop.select.name : '';\n};\n\nconst queryDatabase = async (dbId, filter) => {\n  return request('POST', `/databases/${dbId}/query`, { filter, page_size: 1 });\n};\n\nconst getTitleFromDatabase = (db) => {\n  if (!db || !Array.isArray(db.title)) return '';\n  return db.title.map((t) => t.plain_text).join('');\n};\n\nconst findDatabaseByTitle = async (title) => {\n  const res = await request('POST', '/search', {\n    query: title,\n    page_size: 10,\n    filter: { property: 'object', value: 'database' }\n  });\n  return (res.results || []).find((db) => getTitleFromDatabase(db) === title) || null;\n};\n\nconst findRegistryDbId = async () => {\n  const registryDb = await findDatabaseByTitle('OS Registry');\n  return registryDb ? registryDb.id : null;\n};\n\nconst findRegistryValue = async (registryDbId, key) => {\n  const res = await queryDatabase(registryDbId, {\n    property: 'Key',\n    title: { equals: key }\n  });\n  const page = (res.results || [])[0];\n  if (!page) return null;\n  return getPropertyText(page, 'Value');\n};\n\nconst resolveLedgerDbId = async (registryDbId) => {\n  if (!registryDbId) return null;\n  const ledgerId = await findRegistryValue(registryDbId, 'ledger_db_id');\n  if (ledgerId) return ledgerId;\n  const ledgerDb = await findDatabaseByTitle('Request Ledger');\n  return ledgerDb ? ledgerDb.id : null;\n};\n\nconst findLedgerEntry = async (ledgerDbId, idempotencyKey) => {\n  const res = await queryDatabase(ledgerDbId, {\n    property: 'Idempotency Key',\n    title: { equals: idempotencyKey }\n  });\n  return (res.results || [])[0] || null;\n};\n\nconst createLedgerEntry = async (ledgerDbId, data) => {\n  const properties = {\n    'Idempotency Key': titleText(data.idempotencyKey),\n    'Request ID': richText(data.requestId),\n    'Endpoint': richText(data.endpoint),\n    'Status': { select: { name: data.status } },\n    'Result Object ID': richText(data.resultObjectId || ''),\n    'Timestamp': { date: { start: data.timestamp } },\n    'Raw Request': richText(data.rawRequest || '')\n  };\n  return request('POST', '/pages', {\n    parent: { database_id: ledgerDbId },\n    properties\n  });\n};\n\nconst input = $json || {};\nconst { idempotency_key, endpoint, request_id, result_object_id, status } = input;\n\nif (typeof idempotency_key !== 'string' || typeof endpoint !== 'string' || typeof request_id !== 'string' || typeof status !== 'string') {\n  return [{ json: { committed: false, error: 'invalid_input' } }];\n}\n\nconst registryDbId = await findRegistryDbId();\nif (!registryDbId) {\n  throw new Error('OS Registry database not found');\n}\n\nconst ledgerDbId = await resolveLedgerDbId(registryDbId);\nif (!ledgerDbId) {\n  throw new Error('Request Ledger database not found');\n}\n\nawait createLedgerEntry(ledgerDbId, {\n  idempotencyKey: idempotency_key,\n  requestId: request_id,\n  endpoint,\n  status,\n  resultObjectId: result_object_id || '',\n  timestamp: new Date().toISOString(),\n  rawRequest: ''\n});\n\nreturn [{ json: { committed: true } }];\n"
+      },
+      "id": "65dcf699-1fa9-4b28-966c-e27d73f43ef1",
+      "name": "Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        40,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Execute Workflow Trigger": {
+      "main": [
+        [
+          {
+            "node": "Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "33d9f577-1d0a-44a7-8720-059d75cf60f6",
+  "id": "e1236e22-757e-4343-98d4-cc33d31faef7",
+  "tags": []
+}

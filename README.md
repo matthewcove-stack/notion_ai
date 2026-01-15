@@ -50,10 +50,10 @@ The compose file mounts `./schemas` into the container at `/files/schemas`.
 http://localhost:5678
 ```
 
-## How to import the workflow
+## How to import the workflows
 
 1) In n8n, go to Workflows -> Import from File.
-2) Select the workflow JSON files in `n8n/workflows/`.
+2) Select the workflow JSON files in `n8n/workflows/` and `n8n/workflows/_core/`.
 3) Save and activate each workflow.
 
 The webhook endpoint will be:
@@ -92,4 +92,37 @@ SMOKE_WEBHOOK_PREFIX=<workflow_id>/webhook
 
 ## Endpoints
 
+### /v1/notion/search
+
+POST `/v1/notion/search` with header:
+
+```
+Authorization: Bearer <API_BEARER_TOKEN>
+```
+
+Payload:
+
+```json
+{
+  "request_id": "uuid",
+  "actor": "string",
+  "payload": { "query": "text", "limit": 10, "types": ["page","database"] }
+}
+```
+
 See `docs/endpoints.md` for request/response examples, registry key mapping, and token rotation.
+
+## Shared idempotency core
+
+Reusable sub-workflows live in `n8n/workflows/_core/`:
+
+- `idempotency_check.json`
+- `idempotency_commit.json`
+
+These are called by mutating endpoints to ensure deterministic replay behavior.
+
+## Required environment variables
+
+- `NOTION_API_KEY`
+- `API_BEARER_TOKEN`
+- `N8N_API_KEY` (required for docker smoke tests to resolve workflow webhook IDs)
