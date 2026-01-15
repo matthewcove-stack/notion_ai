@@ -22,6 +22,12 @@ Notion = state store
 • No plugins, no beta integrations, no dev tools  
 • All side-effects occur via HTTPS JSON calls to n8n  
 • The system operates **inside an existing Notion workspace** (Notion API cannot create workspaces)
+• All services, workflows, scripts, and local development tooling MUST run inside Docker containers.
+• No local host-installed dependencies are permitted (Windows workstation is treated as a thin client only).
+• All scripts must be runnable via `docker compose` or `docker exec`.
+• No assumptions about bash/zsh availability on host.
+• All local networking must be via Docker service names, not localhost.
+
 
 ---
 
