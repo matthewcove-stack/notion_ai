@@ -185,3 +185,21 @@ Response data:
 2) Update `.env` with the new value (either `BOOTSTRAP_BEARER_TOKEN` or `API_BEARER_TOKEN`).
 3) Restart n8n: `docker compose up -d`.
 4) Update any clients that call the endpoints.
+
+# Public Webhook URLs
+
+Base: https://glibly-ungravitational-mckayla.ngrok-free.dev
+
+- /v1/notion/tasks/update
+  https://glibly-ungravitational-mckayla.ngrok-free.dev/webhook/Lamgvb3jcOzLyPnt/webhook/v1/notion/tasks/update
+- /v1/os/bootstrap
+  https://glibly-ungravitational-mckayla.ngrok-free.dev/webhook/7bxdnVN9oF933Pdo/webhook/v1/os/bootstrap
+- /v1/notion/search
+  https://glibly-ungravitational-mckayla.ngrok-free.dev/webhook/xWiRSQAZK0sOahE0/webhook/v1/notion/search
+- /v1/notion/db/schema
+  https://glibly-ungravitational-mckayla.ngrok-free.dev/webhook/Gtl8o5343hhkJQfb/webhook/v1/notion/db/schema
+- /v1/notion/tasks/create
+  https://glibly-ungravitational-mckayla.ngrok-free.dev/webhook/G6rgkPl3FjDzGKmk/webhook/v1/notion/tasks/create
+- /v1/notion/db/sample
+  https://glibly-ungravitational-mckayla.ngrok-free.dev/webhook/JZdSG9jUOXGLdHVc/webhook/v1/notion/db/sample
+
