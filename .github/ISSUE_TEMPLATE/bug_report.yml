@@ -1,0 +1,22 @@
+name: Bug report
+description: Report a problem or regression
+labels: [bug]
+body:
+  - type: textarea
+    attributes:
+      label: What happened?
+      description: Steps to reproduce, what you expected, and what actually happened.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Logs or screenshots
+      description: Paste any relevant logs, errors, or screenshots.
+    validations:
+      required: false
+  - type: input
+    attributes:
+      label: Environment
+      description: OS, Notion workspace context, and n8n version if relevant.
+    validations:
+      required: false

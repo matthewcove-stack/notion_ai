@@ -1,0 +1,22 @@
+name: Feature request
+description: Suggest an idea or improvement
+labels: [enhancement]
+body:
+  - type: textarea
+    attributes:
+      label: What should we add or change?
+      description: Describe the problem and the proposed solution.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Alternatives considered
+      description: List any alternatives or tradeoffs you considered.
+    validations:
+      required: false
+  - type: textarea
+    attributes:
+      label: Additional context
+      description: Links, references, or other context.
+    validations:
+      required: false
