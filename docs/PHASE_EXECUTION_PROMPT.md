@@ -1,14 +1,19 @@
-# Phase Execution Prompt — notion_gateway
+# Phase Execution Prompt (Canonical)
 
-Implement only the requested phase.
+You are implementing the requested phase ONLY.
 
-For Phase 1:
-- Verify tasks create/update are idempotent (request_id).
-- Ensure responses include stable IDs.
-- Keep contracts stable; if you must change them, update notion_assistant_contracts + bump VERSION.
+Rules:
+- Do not implement future phases.
+- Do not refactor unrelated code.
+- Follow docs/intent.md.
+- Update docs/current_state.md after changes.
+- Use the smallest safe assumptions; document them.
+- If verification fails twice, stop and report.
 
-Run:
-- `docker compose up -d`
-- `docker compose run --rm smoke all`
+## Mandatory enforcement (Drift Guard MCP)
+Before claiming completion, call these MCP tools and ensure ok=true:
+- repo_contract_validate()
+- verify_run(profile="default")
+- drift_check()
 
-Update `docs/current_state.md` when behaviour changes.
+Include the returned JSON in your final phase report.
