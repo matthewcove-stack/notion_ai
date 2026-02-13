@@ -1,0 +1,83 @@
+{
+  "name": "v1_lists_add_item",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "v1/notion/lists/add_item",
+        "responseMode": "responseNode"
+      },
+      "id": "64c5d0f3-024e-4697-8902-c85ea35cda22",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst executionId = this.getExecutionId ? this.getExecutionId() : Date.now().toString();\n\nfunction respond(statusCode, body) {\n  return [{ json: { httpStatus: statusCode, body } }];\n}\n\nfunction errorEnvelope(requestId, code, message, details) {\n  return {\n    request_id: requestId || null,\n    status: 'error',\n    correlation_id: executionId,\n    data: null,\n    error: { code, message, details: details || {} }\n  };\n}\n\nfunction okEnvelope(requestId, data) {\n  return {\n    request_id: requestId,\n    status: 'ok',\n    correlation_id: executionId,\n    data,\n    error: null\n  };\n}\n\nconst notionToken = $env.NOTION_API_KEY;\nif (!notionToken) {\n  return respond(500, errorEnvelope(null, 'config_error', 'NOTION_API_KEY is not set', {}));\n}\n\nconst baseUrl = 'https://api.notion.com/v1';\nconst notionHeaders = {\n  Authorization: `Bearer ${notionToken}`,\n  'Notion-Version': '2022-06-28',\n  'Content-Type': 'application/json'\n};\n\nconst request = async (method, urlPath, bodyData) => {\n  const options = {\n    method,\n    url: `${baseUrl}${urlPath}`,\n    headers: notionHeaders,\n    json: true\n  };\n  if (bodyData) options.body = bodyData;\n  return this.helpers.httpRequest(options);\n};\n\nconst titleText = (text) => ({ title: [{ text: { content: text } }] });\nconst richText = (text) => ({ rich_text: [{ text: { content: text } }] });\n\nconst getTitleFromPage = (page) => {\n  if (!page || !page.properties) return '';\n  const titleKey = Object.keys(page.properties).find((key) => page.properties[key].type === 'title');\n  if (!titleKey) return '';\n  const titleArray = page.properties[titleKey].title || [];\n  return titleArray.map((t) => t.plain_text).join('');\n};\n\nconst getTitleFromDatabase = (db) => {\n  if (!db || !Array.isArray(db.title)) return '';\n  return db.title.map((t) => t.plain_text).join('');\n};\n\nconst queryDatabase = async (dbId, filter) => {\n  return request('POST', `/databases/${dbId}/query`, { filter, page_size: 1 });\n};\n\nconst getPropertyText = (page, propName) => {\n  const prop = page.properties[propName];\n  if (!prop) return '';\n  if (prop.type === 'rich_text') return (prop.rich_text || []).map((t) => t.plain_text).join('');\n  if (prop.type === 'title') return (prop.title || []).map((t) => t.plain_text).join('');\n  return '';\n};\n\nconst findDatabaseByTitle = async (title) => {\n  const res = await request('POST', '/search', {\n    query: title,\n    page_size: 10,\n    filter: { property: 'object', value: 'database' }\n  });\n  return (res.results || []).find((db) => getTitleFromDatabase(db) === title) || null;\n};\n\nconst findRegistryDbId = async () => {\n  const registryDb = await findDatabaseByTitle('OS Registry');\n  return registryDb ? registryDb.id : null;\n};\n\nconst findRegistryValue = async (registryDbId, key) => {\n  const res = await queryDatabase(registryDbId, {\n    property: 'Key',\n    title: { equals: key }\n  });\n  const page = (res.results || [])[0];\n  if (!page) return null;\n  return getPropertyText(page, 'Value');\n};\n\nconst resolveLedgerDbId = async (registryDbId) => {\n  if (!registryDbId) return null;\n  const ledgerId = await findRegistryValue(registryDbId, 'ledger_db_id');\n  if (ledgerId) return ledgerId;\n  const ledgerDb = await findDatabaseByTitle('Request Ledger');\n  return ledgerDb ? ledgerDb.id : null;\n};\n\nconst resolveDatabaseId = async (registryDbId, databaseKey) => {\n  if (!registryDbId) return null;\n  if (databaseKey === 'registry') return registryDbId;\n  if (databaseKey === 'request_ledger') return await resolveLedgerDbId(registryDbId);\n  const key = `${databaseKey}_db_id`;\n  const dbId = await findRegistryValue(registryDbId, key);\n  return dbId || null;\n};\n\nconst findLedgerEntry = async (ledgerDbId, idempotencyKey) => {\n  const res = await queryDatabase(ledgerDbId, {\n    property: 'Idempotency Key',\n    title: { equals: idempotencyKey }\n  });\n  return (res.results || [])[0] || null;\n};\n\nconst createLedgerEntry = async (ledgerDbId, data) => {\n  const properties = {\n    'Idempotency Key': titleText(data.idempotencyKey),\n    'Request ID': richText(data.requestId),\n    'Endpoint': richText(data.endpoint),\n    'Status': { select: { name: data.status } },\n    'Result Object ID': richText(data.resultObjectId || ''),\n    'Timestamp': { date: { start: data.timestamp } },\n    'Raw Request': richText(data.rawRequest || '')\n  };\n  return request('POST', '/pages', {\n    parent: { database_id: ledgerDbId },\n    properties\n  });\n};\n\nconst getPage = async (pageId) => request('GET', `/pages/${pageId}`);\n\n\nconst headers = $json.headers || {};\nconst authHeader = (headers.authorization || headers.Authorization || '').trim();\nconst bearerToken = $env.API_BEARER_TOKEN || '';\n\nif (!bearerToken) {\n  return respond(500, errorEnvelope(null, 'config_error', 'No bearer token configured', {}));\n}\n\nconst expectedAuth = `Bearer ${bearerToken}`;\n\nif (authHeader !== expectedAuth) {\n  return respond(401, errorEnvelope(null, 'unauthorized', 'Invalid or missing Authorization header', {}));\n}\n\nconst body = $json.body;\nif (!body || typeof body !== 'object') {\n  return respond(400, errorEnvelope(null, 'invalid_request', 'Request body must be a JSON object', {}));\n}\n\nconst { request_id, idempotency_key, actor, payload } = body;\nif (typeof request_id !== 'string' || typeof idempotency_key !== 'string' || typeof actor !== 'string' || typeof payload !== 'object' || payload === null) {\n  return respond(400, errorEnvelope(request_id, 'invalid_request', 'Missing or invalid request envelope fields', {}));\n}\n\nconst listItem = payload.list_item;\nif (!listItem || typeof listItem !== 'object') {\n  return respond(400, errorEnvelope(request_id, 'invalid_request', 'payload.list_item must be an object', {}));\n}\n\nif (typeof listItem.item !== 'string' || listItem.item.trim() === '') {\n  return respond(400, errorEnvelope(request_id, 'invalid_request', 'list_item.item is required', {}));\n}\n\ntry {\n  const registryDbId = await findRegistryDbId();\n  if (!registryDbId) {\n    return respond(500, errorEnvelope(request_id, 'registry_not_found', 'OS Registry database not found', {}));\n  }\n\n  const ledgerDbId = await resolveLedgerDbId(registryDbId);\n  if (!ledgerDbId) {\n    return respond(500, errorEnvelope(request_id, 'ledger_not_found', 'Request Ledger database not found', {}));\n  }\n\n  const listDbId = await resolveDatabaseId(registryDbId, 'shopping_list') || await resolveDatabaseId(registryDbId, 'tasks');\n\n  if (!listDbId) {\n    return respond(500, errorEnvelope(request_id, 'shopping_list_db_not_found', 'Shopping list database not found', {}));\n  }\n\n  const existingLedger = await findLedgerEntry(ledgerDbId, idempotency_key);\n  if (existingLedger) {\n    const priorId = getPropertyText(existingLedger, 'Result Object ID');\n    let priorUrl = null;\n    if (priorId) {\n      const page = await getPage(priorId);\n      priorUrl = page.url || null;\n    }\n\n    return respond(200, okEnvelope(request_id, {\n      created: false,\n      notion_page_id: priorId || null,\n      notion_url: priorUrl\n    }));\n  }\n\n  const properties = {\n    Title: titleText(listItem.item),\n    'Idempotency Key': richText(idempotency_key)\n  };\n\n  if (listItem.status) {\n    properties.Status = { select: { name: listItem.status } };\n  }\n  if (listItem.due) {\n    properties.Due = { date: { start: listItem.due } };\n  }\n  if (listItem.priority) {\n    properties.Priority = { select: { name: listItem.priority } };\n  }\n  if (listItem.project) {\n    properties.Project = richText(listItem.project);\n  }\n  if (Array.isArray(listItem.tags)) {\n    properties.Tags = { multi_select: listItem.tags.map((name) => ({ name })) };\n  }\n  if (listItem.notes) {\n    properties.Notes = richText(listItem.notes);\n  }\n\n  const created = await request('POST', '/pages', {\n    parent: { database_id: listDbId },\n    properties\n  });\n\n  const nowIso = new Date().toISOString();\n  await createLedgerEntry(ledgerDbId, {\n    idempotencyKey: idempotency_key,\n    requestId: request_id,\n    endpoint: '/v1/notion/lists/add_item',\n    status: 'ok',\n    resultObjectId: created.id,\n    timestamp: nowIso,\n    rawRequest: JSON.stringify(body)\n  });\n\n  return respond(200, okEnvelope(request_id, {\n    created: true,\n    notion_page_id: created.id,\n    notion_url: created.url\n  }));\n} catch (error) {\n  const message = error && error.message ? error.message : 'Add list item failed';\n  return respond(500, errorEnvelope(request_id, 'lists_add_item_failed', message, { stack: error && error.stack }));\n}\n"
+      },
+      "id": "0d067101-c5bc-4d26-bd68-124507dfafe7",
+      "name": "Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        40,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json.body}}",
+        "options": {
+          "responseCode": "={{$json.httpStatus}}"
+        }
+      },
+      "id": "51e491a7-33fa-4eb1-8438-fd9de2c4b76b",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        300,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handler": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "2615b807-4082-4130-b7f1-e4744f7a4d2d",
+  "id": "89cfe311-3eed-4efa-abdd-879159fbc33e",
+  "tags": []
+}
+
+
+

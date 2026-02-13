@@ -16,6 +16,8 @@ See `INTENT.md` for the full specification.
 - `POST /v1/notion/search`
 - `POST /v1/notion/tasks/create`
 - `POST /v1/notion/tasks/update`
+- `POST /v1/notion/lists/add_item`
+- `POST /v1/notion/notes/capture`
 - `POST /v1/notion/db/schema`
 - `POST /v1/notion/db/sample`
 

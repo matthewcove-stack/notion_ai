@@ -4,6 +4,9 @@
 - Local n8n + Postgres compose environment
 - Schema-as-code under `schemas/`
 - Webhook endpoints for bootstrap, search, tasks create/update, db schema/sample (per README)
+- Additional Phase 2 mutation endpoints:
+  - `POST /v1/notion/lists/add_item`
+  - `POST /v1/notion/notes/capture`
 - Smoke tests exist (`docker compose run --rm smoke all`)
 
 ## What must be true for Brain OS Phase 1

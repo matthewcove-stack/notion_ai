@@ -1,0 +1,9 @@
+{
+  "title": "Notes",
+  "properties": {
+    "Title": { "title": {} },
+    "Notes": { "rich_text": {} },
+    "Tags": { "multi_select": {} },
+    "Idempotency Key": { "rich_text": {} }
+  }
+}

@@ -1,4 +1,4 @@
-# Phase 1 Endpoints
+# V1 Endpoints
 
 All endpoints are POST webhooks exposed by n8n. Every response uses the standard envelope from `INTENT.md`.
 
@@ -123,6 +123,64 @@ Response data:
 }
 ```
 
+### /v1/notion/lists/add_item
+
+Request:
+
+```json
+{
+  "request_id": "uuid",
+  "idempotency_key": "ghi789",
+  "actor": "user",
+  "payload": {
+    "list_item": {
+      "list_key": "shopping_list",
+      "item": "Milk",
+      "notes": "2% preferred"
+    }
+  }
+}
+```
+
+Response data:
+
+```json
+{
+  "created": true,
+  "notion_page_id": "...",
+  "notion_url": "..."
+}
+```
+
+### /v1/notion/notes/capture
+
+Request:
+
+```json
+{
+  "request_id": "uuid",
+  "idempotency_key": "jkl012",
+  "actor": "user",
+  "payload": {
+    "note": {
+      "title": "Idea",
+      "content": "Explore alternate onboarding flow",
+      "tags": ["product", "ux"]
+    }
+  }
+}
+```
+
+Response data:
+
+```json
+{
+  "created": true,
+  "notion_page_id": "...",
+  "notion_url": "..."
+}
+```
+
 ### /v1/notion/db/schema
 
 Request:
@@ -208,4 +266,3 @@ Base: https://glibly-ungravitational-mckayla.ngrok-free.dev
   https://glibly-ungravitational-mckayla.ngrok-free.dev/webhook/G6rgkPl3FjDzGKmk/webhook/v1/notion/tasks/create
 - /v1/notion/db/sample
   https://glibly-ungravitational-mckayla.ngrok-free.dev/webhook/JZdSG9jUOXGLdHVc/webhook/v1/notion/db/sample
-
