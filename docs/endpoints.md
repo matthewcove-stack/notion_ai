@@ -15,6 +15,10 @@ Authorization: Bearer <API_BEARER_TOKEN>
 - `/v1/notion/search`
 - `/v1/notion/tasks/create`
 - `/v1/notion/tasks/update`
+- `/v1/notion/lists/add_item`
+- `/v1/notion/notes/capture`
+- `/v1/notion/db/rows/create` (optional)
+
 - `/v1/notion/db/schema`
 - `/v1/notion/db/sample`
 
@@ -28,6 +32,8 @@ Database keys resolve to OS Registry entries:
 - `clients` -> `clients_db_id`
 - `registry` -> `registry_db_id`
 - `request_ledger` -> `ledger_db_id`
+- `shopping_list` -> `shopping_list_db_id`
+- `notes` -> `notes_db_id` (or reuse `knowledge_db_id`)
 
 ## Examples
 
